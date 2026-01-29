@@ -2,7 +2,7 @@
 # BigQuery 設定
 # ------------------------------------------------
 bigquery:
-    dataset: 'tw_top_50_stock_data' # 在 BigQuery 中的 Dataset 名稱
+    dataset: 'tw_top_{_top_n}_stock_data' # 在 BigQuery 中的 Dataset 名稱
     location: 'asia-east1' # 資料集位置 (建議與 GCS Bucket 區域一致)
 
 # ------------------------------------------------

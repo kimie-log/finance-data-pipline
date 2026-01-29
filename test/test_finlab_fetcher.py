@@ -1,6 +1,7 @@
 from unittest import mock
 
 import pandas as pd
+import pytest
 
 from conftest import require_module
 
@@ -92,3 +93,82 @@ def test_fetch_top_stocks_without_top_n():
 
         # 驗證：排除航運後保留上市股票
         assert result == ["2330", "2317"]
+
+
+def test_fetch_top_stocks_with_market_value_date():
+    # 準備：兩期市值資料，指定日期應選到較早的一期
+    FinLabFetcher = _get_fetcher()
+    company_info = pd.DataFrame(
+        {
+            "stock_id": ["2330", "2317"],
+            "公司名稱": ["A", "B"],
+            "上市日期": ["2000-01-01", "2010-01-01"],
+            "產業類別": ["半導體", "電子"],
+            "市場別": ["sii", "sii"],
+        }
+    )
+    market_value = pd.DataFrame(
+        {
+            "2330": [10, 30],
+            "2317": [20, 5],
+        },
+        index=pd.to_datetime(["2024-01-01", "2024-02-01"]),
+    )
+
+    def get_side_effect(key):
+        if key == "company_basic_info":
+            return company_info
+        if key == "etl:market_value":
+            return market_value
+        raise KeyError(key)
+
+    with mock.patch("ingestion.finlab_fetcher.data.get") as mock_get:
+        mock_get.side_effect = get_side_effect
+
+        result = FinLabFetcher.fetch_top_stocks_by_market_value(
+            excluded_industry=[],
+            pre_list_date=None,
+            top_n=1,
+            market_value_date="2024-01-15",
+        )
+
+        assert result == ["2317"]
+
+
+def test_fetch_top_stocks_market_value_date_too_early_raises():
+    # 準備：最早市值日期為 2024-01-01，過早日期應拋錯
+    FinLabFetcher = _get_fetcher()
+    company_info = pd.DataFrame(
+        {
+            "stock_id": ["2330", "2317"],
+            "公司名稱": ["A", "B"],
+            "上市日期": ["2000-01-01", "2010-01-01"],
+            "產業類別": ["半導體", "電子"],
+            "市場別": ["sii", "sii"],
+        }
+    )
+    market_value = pd.DataFrame(
+        {
+            "2330": [10, 30],
+            "2317": [20, 5],
+        },
+        index=pd.to_datetime(["2024-01-01", "2024-02-01"]),
+    )
+
+    def get_side_effect(key):
+        if key == "company_basic_info":
+            return company_info
+        if key == "etl:market_value":
+            return market_value
+        raise KeyError(key)
+
+    with mock.patch("ingestion.finlab_fetcher.data.get") as mock_get:
+        mock_get.side_effect = get_side_effect
+
+        with pytest.raises(ValueError):
+            FinLabFetcher.fetch_top_stocks_by_market_value(
+                excluded_industry=[],
+                pre_list_date=None,
+                top_n=1,
+                market_value_date="2023-12-31",
+            )

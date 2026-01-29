@@ -58,4 +58,4 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     # 依檔名排序輸出結果，方便掃描
     for path in sorted(results_by_file):
         filename = Path(path).name
-        terminalreporter.write_line(f"{filename}測試成功")
+        terminalreporter.write_line(f"測試成功:  {filename}")

@@ -24,6 +24,7 @@ class FinLabFetcher:
         excluded_industry: Annotated[List[str], "需要排除的特定產業類別列表"] = [],
         pre_list_date: Annotated[str, "上市日期須早於此指定日期"] | None = None,
         top_n: Annotated[int, "市值前 N 大的公司"] | None = None,
+        market_value_date: Annotated[str, "市值基準日期 (YYYY-MM-DD)"] | None = None,
     ) -> Annotated[List[str], "符合條件的公司代碼列表"]:
         '''
         函式說明：
@@ -43,11 +44,26 @@ class FinLabFetcher:
             company_info = company_info[company_info["市場別"] == "sii"]
             company_info = company_info[company_info["上市日期"] < pre_list_date]
 
-        # 取得市值並過濾 Top N：以最新一期市值排名為主
+        # 取得市值並過濾 Top N：以最新或指定日期市值排名為主
         if top_n:
-            # 市值表為時間序列，取最後一列代表最新市值
-            df_market_value = data.get("etl:market_value")
-            latest_market_value = df_market_value.iloc[-1].rename("market_value").reset_index()
+            # 市值表為時間序列，可指定基準日期以確保可重現性
+            df_market_value = data.get("etl:market_value").copy()
+            df_market_value.index = pd.to_datetime(df_market_value.index)
+
+            if market_value_date:
+                target_date = pd.to_datetime(market_value_date)
+                candidate_dates = df_market_value.index[df_market_value.index <= target_date]
+                if candidate_dates.empty:
+                    raise ValueError(f"No market value data before {market_value_date}")
+                selected_date = candidate_dates.max()
+            else:
+                selected_date = df_market_value.index.max()
+
+            latest_market_value = (
+                df_market_value.loc[selected_date]
+                .rename("market_value")
+                .reset_index()
+            )
             latest_market_value.columns = ["stock_id", "market_value"]
             
             # 合併市值與公司資訊，確保資料一致性
