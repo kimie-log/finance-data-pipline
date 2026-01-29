@@ -44,9 +44,11 @@ raw_dir = ROOT_DIR / "data/raw" / date_folder
 processed_dir = ROOT_DIR / "data/processed" / date_folder
 
 if not (ROOT_DIR / "data/raw" / date_folder).exists():
+    # 建立 raw 目錄
     raw_dir.mkdir(parents=True, exist_ok=True)
 
 if not (ROOT_DIR / "data/processed" / date_folder).exists():
+    # 建立 processed 目錄
     processed_dir.mkdir(parents=True, exist_ok=True)
 
 # 初始化 GCP 環境
@@ -96,6 +98,7 @@ try:
     is_tw_stock: stock_symbols 是否是台灣股票
     return: 每日股票收盤價資料表 (索引是日期(DatetimeIndex格式)，欄位名稱為純股票代碼)
     '''
+    # 下載每日收盤價，回傳 wide format
     df_close_raw = YFinanceFetcher.fetch_daily_close_prices(
         stock_symbols=top50_tickers, 
         start_date=start_date, 
@@ -103,16 +106,17 @@ try:
         is_tw_stock=True
         )
     
-    # 儲存 Raw Data 到 Local
+    # 儲存 Raw Data 到 Local：保留原始資料以便追查與重跑
     raw_filename = f"top50_close_raw_{timestamp}.parquet"
     raw_local_path = raw_dir / raw_filename
     df_close_raw.to_parquet(raw_local_path)
     
     # 上傳 Raw Data 到 GCS
-    # 如果這裡發生 invalid_grant，請在 Terminal 執行 `gcloud auth application-default login`
+    # 如果這裡發生 invalid_grant：請在 Terminal 執行 `gcloud auth application-default login`
     upload_file(bucket_name, raw_local_path, f"raw/yfinance/{date_folder}/{raw_filename}")
 
 except Exception as e:
+    # ingestion 失敗直接結束：避免後續步驟使用空資料
     logger.error(f"Ingestion Failed: {e}")
     sys.exit(1)
 
@@ -123,35 +127,35 @@ except Exception as e:
 logger.info("=== STEP 2: Transformation Started ===")
 
 try:
-    # 執行轉置與清洗
+    # 執行轉置與清洗：轉為 long format 以符合資料倉儲 schema
     df_cleaned_price = Transformer.process_market_data(df_close_raw)
     
-    # 資料驗證：檢查是否為空
     if df_cleaned_price.empty:
         raise ValueError("Transformed data is empty! Check yfinance source.")
 
-    # 型別一致性：確保 stock_id 永遠是字串 (避免 Parquet schema 錯誤)
+    # 型別一致性：確保 stock_id 永遠是字串，避免 Parquet schema 錯誤
     df_cleaned_price['stock_id'] = df_cleaned_price['stock_id'].astype(str)
     
-    # 檢查重複值：同天同一支股票不應有兩筆資料
+    # 檢查重複值：同天同一支股票不應有兩筆資料，避免資料重複
     duplicates = df_cleaned_price.duplicated(subset=['date', 'stock_id']).sum()
     if duplicates > 0:
         logger.warning(f"Detected {duplicates} duplicate rows. Dropping duplicates...")
         df_cleaned_price = df_cleaned_price.drop_duplicates(subset=['date', 'stock_id'])
 
-    # 儲存 Processed Data
+    # 儲存 Processed Data：轉換後資料也落地，方便追蹤與重跑
     processed_dir = ROOT_DIR / "data/processed" / date_folder
     processed_dir.mkdir(parents=True, exist_ok=True)
     
     processed_path = processed_dir / f"fact_price_{timestamp}.parquet"
     
-    # compression='snappy' 兼顧速度與體積
+    # 設定compression='snappy'：兼顧速度與體積
     df_cleaned_price.to_parquet(processed_path, index=False, compression='snappy')
     
     logger.info(f"Transformation Success! Saved to: {processed_path.name}")
     logger.info(f"Summary: {len(df_cleaned_price)} rows, {df_cleaned_price['stock_id'].nunique()} tickers.")
     
 except Exception as e:
+    # 轉換失敗直接停止：避免將異常資料寫入倉儲
     logger.error(f"Transformation Failed: {str(e)}")
     sys.exit(1)
 
@@ -162,7 +166,7 @@ except Exception as e:
 logger.info("=== STEP 3: Loading to BigQuery Started ===")
 
 try:
-    # 寫入 Fact Table
+    # 寫入 Fact Table：以 append 為主，避免覆蓋歷史資料
     load_to_bigquery(
         df=df_cleaned_price, 
         dataset_id=bq_dataset, 
@@ -172,6 +176,7 @@ try:
     logger.info("Pipeline Completed Successfully!")
 
 except Exception as e:
+    # 寫入失敗記錄錯誤後終止：方便排查
     logger.error(f"Loading Failed: {e}")
     sys.exit(1)
 # %%

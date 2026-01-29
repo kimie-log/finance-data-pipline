@@ -3,6 +3,7 @@ from pathlib import Path
 from utils.logger import logger
 
 def check_gcp_environment(root_dir: Path):
+    # 固定使用專案根目錄下的 gcp_keys，避免憑證散落
     key_dir = root_dir / "gcp_keys"
     
     # 確保資料夾存在
@@ -17,6 +18,7 @@ def check_gcp_environment(root_dir: Path):
     json_keys = list(key_dir.glob("*.json"))
     
     if not json_keys:
+        # 沒有金鑰時直接退出，避免後續 API 呼叫失敗
         logger.warning(f"⚠️  尚未偵測到金鑰。請將 GCP 服務帳戶 JSON 檔案放入：{key_dir}")
         # 如果是互動式環境，可以在這裡暫停或提示
         sys.exit(1) 

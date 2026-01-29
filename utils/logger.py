@@ -7,7 +7,9 @@ from typing import Optional
 
 def _get_log_level() -> int:
     """從環境變數 LOG_LEVEL 取得日誌等級，預設為 INFO。"""
+    # 環境變數優先，便於在不同環境動態調整
     level = os.getenv("LOG_LEVEL", "INFO").upper()
+    # 若填入不存在等級，回退到 INFO
     return getattr(logging, level, logging.INFO)
 
 
@@ -19,12 +21,14 @@ def _get_log_dir() -> Path:
     """
     log_dir_env = os.getenv("LOG_DIR")
     if log_dir_env:
+        # 優先採用環境變數配置
         log_dir = Path(log_dir_env)
     else:
         # 預設：utils/logger.py -> 專案根目錄 / logs
         root_dir = Path(__file__).resolve().parents[1]
         log_dir = root_dir / "logs"
 
+    # 確保目錄存在，避免 handler 初始化失敗
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
 
@@ -41,12 +45,14 @@ def configure_logger(name: Optional[str] = "finance_pipeline") -> logging.Logger
       - LOG_LEVEL：DEBUG / INFO / WARNING / ERROR / CRITICAL
       - LOG_DIR：自訂 log 目錄
     """
+    # 每個 name 對應一個 logger，避免全域共用造成設定衝突
     logger = logging.getLogger(name)
 
     # 若已設定過 handler，直接回傳，避免重複新增 handler
     if logger.handlers:
         return logger
 
+    # 依環境變數設定 log 等級
     logger.setLevel(_get_log_level())
 
     # 共用 formatter：加入模組名稱與行號，方便除錯
@@ -55,6 +61,7 @@ def configure_logger(name: Optional[str] = "finance_pipeline") -> logging.Logger
     )
 
     # Console Handler
+    # 適合在本機或容器中查看即時輸出
     console_handler = logging.StreamHandler()
     console_handler.setLevel(_get_log_level())
     console_handler.setFormatter(formatter)
@@ -62,6 +69,7 @@ def configure_logger(name: Optional[str] = "finance_pipeline") -> logging.Logger
 
     # File Handler (Rotating)
     try:
+        # 檔案記錄可保存歷史，方便稽核與回溯
         log_dir = _get_log_dir()
         log_file = log_dir / "finance_pipeline.log"
 

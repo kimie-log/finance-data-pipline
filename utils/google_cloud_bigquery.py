@@ -18,6 +18,7 @@ def load_to_bigquery(
     函數說明：
     使用 暫存表 + MERGE 的方式將 DataFrame 上傳到 BigQuery，支援 Upsert 功能
     """
+    # BigQuery 常見可重試錯誤，集中管理便於統一處理
     retryable_exceptions = (
         gcp_exceptions.ServiceUnavailable,
         gcp_exceptions.DeadlineExceeded,
@@ -27,14 +28,17 @@ def load_to_bigquery(
         gcp_exceptions.GatewayTimeout,
     )
 
+    # 暫存表參考，用於 finally 的清理邏輯
     staging_table_ref = None
 
     try:
+        # 從環境變數取得專案 ID，避免在程式碼中硬編碼
         project_id = os.getenv("GCP_PROJECT_ID")
         if not project_id:
             logger.error("Missing required environment variable: GCP_PROJECT_ID")
             raise ValueError("GCP_PROJECT_ID is not set")
 
+        # 建立 BigQuery client
         client = bigquery.Client(project=project_id)
 
         # 確保 Dataset 存在
@@ -46,6 +50,7 @@ def load_to_bigquery(
                 retry_exceptions=retryable_exceptions,
             )
         except NotFound:
+            # 若 Dataset 不存在則建立，避免後續任務失敗
             dataset = bigquery.Dataset(dataset_ref)
             dataset.location = "asia-east1"
             run_with_retry(
@@ -57,6 +62,7 @@ def load_to_bigquery(
 
         # 如果使用者只想簡單 append 或 truncate
         if if_exists != 'upsert':
+            # 依 write_disposition 寫入資料
             job_config = bigquery.LoadJobConfig(write_disposition=f"WRITE_{if_exists.upper()}")
             run_with_retry(
                 lambda: client.load_table_from_dataframe(
@@ -68,6 +74,7 @@ def load_to_bigquery(
             return
 
         # 執行 Upsert (Merge) 邏輯
+        # 使用暫存表避免直接在目標表做大量寫入造成鎖定或部分失敗
         staging_table_id = f"{table_id}_staging_{pd.Timestamp.now().strftime('%H%M%S')}"
         staging_table_ref = dataset_ref.table(staging_table_id)
         target_table_ref = dataset_ref.table(table_id)
@@ -102,6 +109,7 @@ def load_to_bigquery(
                 action_name=f"BigQuery get table {dataset_id}.{table_id}",
                 retry_exceptions=retryable_exceptions,
             )
+            # 目標表存在時進行 MERGE
             run_with_retry(
                 lambda: client.query(merge_sql).result(),
                 action_name=f"BigQuery merge {dataset_id}.{table_id}",
@@ -117,7 +125,7 @@ def load_to_bigquery(
                 retry_exceptions=retryable_exceptions,
             )
 
-        # 刪除暫存表
+        # 刪除暫存表，避免佔用儲存空間與成本
         run_with_retry(
             lambda: client.delete_table(staging_table_ref, not_found_ok=True),
             action_name=f"BigQuery delete staging {dataset_id}.{staging_table_id}",
@@ -125,6 +133,7 @@ def load_to_bigquery(
         )
 
     except Exception as e:
+        # 記錄完整上下文，便於除錯與追蹤
         logger.exception(
             "BigQuery Load Error (dataset=%s, table=%s, mode=%s): %s",
             dataset_id,
@@ -134,6 +143,7 @@ def load_to_bigquery(
         )
         raise
     finally:
+        # 確保暫存表清理，即使前面流程失敗也嘗試回收資源
         if staging_table_ref is not None:
             try:
                 run_with_retry(
@@ -142,8 +152,10 @@ def load_to_bigquery(
                     retry_exceptions=retryable_exceptions,
                 )
             except Exception:
+                # 清理失敗只記錄警告，不中斷主流程
                 logger.warning(
                     "Failed to cleanup staging table %s (ignored).",
                     staging_table_ref.table_id,
                 )
+        # 強制回收記憶體，避免大資料處理後的記憶體殘留
         gc.collect() # 執行完畢強制回收記憶體
