@@ -1,3 +1,8 @@
+"""
+ingestion/finlab_fetcher 的單元測試：FinLabFetcher.finlab_login、fetch_top_stocks_universe。
+
+驗證 FinLab 登入使用環境變數、universe 取得（產業排除、上市日期篩選、市值排序、欄位正規化）。
+"""
 from unittest import mock
 
 import pandas as pd
@@ -7,7 +12,12 @@ from conftest import require_module
 
 
 def _get_fetcher():
-    # 確保 finlab 已安裝，避免測試在缺依賴時直接壞掉
+    """
+    取得 FinLabFetcher class，確保 finlab 套件已安裝。
+
+    Returns:
+        FinLabFetcher class。
+    """
     require_module("finlab", "pip install -r requirements.txt")
     from ingestion.finlab_fetcher import FinLabFetcher
 
@@ -15,19 +25,26 @@ def _get_fetcher():
 
 
 def test_finlab_login_uses_token():
-    # 準備：mock 環境變數與 login
+    """
+    驗證 finlab_login 從環境變數讀取 FINLAB_API_TOKEN 並呼叫 finlab.login。
+
+    實務：避免互動輸入驗證碼，依賴 .env 設定；未設定時會拋出 ValueError。
+    """
     FinLabFetcher = _get_fetcher()
     with mock.patch("ingestion.finlab_fetcher.os.getenv", return_value="token") as mock_getenv:
         with mock.patch("ingestion.finlab_fetcher.finlab.login") as mock_login:
-            # 執行：登入流程
             FinLabFetcher.finlab_login()
-            # 驗證：有讀取 token 並呼叫 login
             mock_getenv.assert_called_once()
             mock_login.assert_called_once_with("token")
 
 
 def test_fetch_top_stocks_universe_basic():
-    # 準備：公司與市值資料，驗證 universe 結構與排序
+    """
+    驗證 fetch_top_stocks_universe：產業排除、上市日期篩選、市值排序、欄位正規化。
+
+    實務：驗證 universe 結構符合 BigQuery dim_universe 需求；欄位命名標準化（中→英）、
+    日期轉字串、rank 與 top_n 欄位正確。
+    """
     FinLabFetcher = _get_fetcher()
     company_info = pd.DataFrame(
         {
@@ -64,9 +81,7 @@ def test_fetch_top_stocks_universe_basic():
             market_value_date="2024-02-01",
         )
 
-        # 應只包含非航運且上市較早的前兩大市值
         assert list(universe["stock_id"]) == ["2330", "2317"]
-        # 必要欄位存在
         for col in [
             "stock_id",
             "company_name",

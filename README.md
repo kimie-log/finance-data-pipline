@@ -71,9 +71,9 @@
 
 **因子分析所需對照**
 
-- 因子值：`fact_factor_*`（date, stock_id, factor_name, value）或程式內 `get_factor_data` / `fetch_factors_daily`。
+- 因子值：`fact_factor_*`（date, stock_id, factor_name, value）或程式內 `FinLabFactorFetcher.get_factor_data` / `FinLabFactorFetcher.fetch_factors_daily`。
 - 價量／報酬：同上 `fact_price_*`。
-- 單因子／多因子排名：程式內 `rank_stocks_by_factor`、`calculate_weighted_rank`（見下方「因子相關」）。
+- 單因子／多因子排名：程式內 `FactorRanking.rank_stocks_by_factor`、`FactorRanking.calculate_weighted_rank`（見下方「因子相關」）。
 
 **小結**：目前資料輸入、輸出與產生的檔案足以支援回測與因子分析。專案已實作三項優化：（1）**滾動回測**：可用 `--market-value-dates 2024-01-15,2024-02-15,...` 一次跑多個市值日 ETL；（2）**本地檔名**：raw／processed parquet 檔名含 `mv{日期}_top{n}`，與 BigQuery 表名對應；（3）**因子表並存**：同一組 (mv, start, end, top_n) 可透過 `--factor-table-suffix`（或設定檔 `factors.factor_table_suffix`）並存多組因子表。
 
@@ -81,10 +81,10 @@
 
 - **抓因子**：從 FinLab 取 `fundamental_features:{因子名}`，用 `.deadline()` 轉成財報截止日。
 - **季頻→日頻**：用交易日序列 merge + 向前填補（ffill），展開成每日一筆，再 melt 成 long（date, stock_id, factor_name, value）。
-- **季度對齊**：`convert_quarter_to_dates` / `convert_date_to_quarter` 對齊台灣財報揭露區間。
-- **單因子排名**：`rank_stocks_by_factor`（每日依因子值排名，正／負相關可選）。
-- **多因子加權排名**：`calculate_weighted_rank`（多個已排名表 × 權重加總後再排名）。
-- **查因子清單**：`list_factors_by_type("fundamental_features")` 列出可用的財報因子名稱。
+- **季度對齊**：`FinLabFactorFetcher.convert_quarter_to_dates` / `FinLabFactorFetcher.convert_date_to_quarter` 對齊台灣財報揭露區間。
+- **單因子排名**：`FactorRanking.rank_stocks_by_factor`（每日依因子值排名，正／負相關可選）。
+- **多因子加權排名**：`FactorRanking.calculate_weighted_rank`（多個已排名表 × 權重加總後再排名）。
+- **查因子清單**：`FinLabFactorFetcher.list_factors_by_type("fundamental_features")` 列出可用的財報因子名稱。
 
 
 #### 五、CLI 與設定可控制的事
@@ -113,7 +113,7 @@
 - `scripts/run_etl_pipeline.py`：主 ETL 腳本，負責串起整個流程（FinLab universe + yfinance OHLCV + BigQuery）
 - `ingestion/`  
   - `finlab_fetcher.py`：FinLab 登入與 Top N 市值 **universe**（含 `delist_date` 若 FinLab 有提供）
-  - `finlab_factor_fetcher.py`：財報／基本面因子抓取並展開至日頻（供 `--with-factors` 使用）
+  - `finlab_factor_fetcher.py`：`FinLabFactorFetcher` 財報／基本面因子抓取並展開至日頻（供 `--with-factors` 使用）
   - `yfinance_fetcher.py`：OHLCV 抓價 `fetch_daily_ohlcv_data`、基準指數 `fetch_benchmark_daily`
   - `base_fetcher.py`：抓取器基底類別
 - `processing/transformer.py`：OHLCV 清洗、日報酬、交易可行性標記（`is_suspended` / `is_limit_up` / `is_limit_down`）
@@ -278,10 +278,10 @@ python -m pytest -q
 
 主要測試涵蓋：
 - `test_finlab_fetcher.py`：FinLab 登入與 `fetch_top_stocks_universe`
-- `test_finlab_factor_fetcher.py`：`extend_factor_data`、`get_factor_data`、`fetch_factors_daily`、`convert_quarter_to_dates`、`convert_date_to_quarter`、`list_factors_by_type`
+- `test_finlab_factor_fetcher.py`：`FinLabFactorFetcher` 各 staticmethod（`extend_factor_data`、`get_factor_data`、`fetch_factors_daily`、`convert_quarter_to_dates`、`convert_date_to_quarter`、`list_factors_by_type`）
 - `test_yfinance_fetcher.py`：`fetch_daily_ohlcv_data`、`fetch_benchmark_daily` 的欄位與資料結構
 - `test_transformer.py`：`process_ohlcv_data` 的清洗與日報酬計算
-- `test_factor_ranking.py`：`rank_stocks_by_factor`、`calculate_weighted_rank`
+- `test_factor_ranking.py`：`FactorRanking.rank_stocks_by_factor`、`calculate_weighted_rank`（皆為 staticmethod）
 - `test_cli.py`：`parse_args`、`resolve_params`
 - `test_run_etl_pipeline_cli.py`：CLI 參數解析、檔名與 BigQuery 命名規則、GCS 路徑
 - `test_base_fetcher.py`：`BaseFetcher.save_local`
@@ -295,11 +295,11 @@ python -m pytest -q
 | 模組 | 函式 | 測試檔 |
 |------|------|--------|
 | `ingestion/finlab_fetcher.py` | `finlab_login`, `fetch_top_stocks_universe` | `test_finlab_fetcher.py` |
-| `ingestion/finlab_factor_fetcher.py` | `extend_factor_data`, `get_factor_data`, `fetch_factors_daily`, `convert_quarter_to_dates`, `convert_date_to_quarter`, `list_factors_by_type` | `test_finlab_factor_fetcher.py` |
+| `ingestion/finlab_factor_fetcher.py` | `FinLabFactorFetcher.extend_factor_data`, `get_factor_data`, `fetch_factors_daily`, `convert_quarter_to_dates`, `convert_date_to_quarter`, `list_factors_by_type`（皆為 staticmethod） | `test_finlab_factor_fetcher.py` |
 | `ingestion/yfinance_fetcher.py` | `fetch_daily_ohlcv_data`, `fetch_benchmark_daily` | `test_yfinance_fetcher.py` |
 | `ingestion/base_fetcher.py` | `save_local`（`fetch` 為抽象方法） | `test_base_fetcher.py` |
 | `processing/transformer.py` | `process_ohlcv_data` | `test_transformer.py` |
-| `processing/factor_ranking.py` | `rank_stocks_by_factor`, `calculate_weighted_rank` | `test_factor_ranking.py` |
+| `processing/factor_ranking.py` | `FactorRanking.rank_stocks_by_factor`, `calculate_weighted_rank`（皆為 staticmethod） | `test_factor_ranking.py` |
 | `utils/cli.py` | `parse_args`, `resolve_params`, `load_config` | `test_cli.py` |
 | `utils/google_cloud_bigquery.py` | `load_to_bigquery` | `test_google_cloud_bigquery.py` |
 | `utils/google_cloud_platform.py` | `check_gcp_environment` | `test_google_cloud_platform.py` |

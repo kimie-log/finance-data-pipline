@@ -1,3 +1,8 @@
+"""
+processing/transformer 的單元測試：Transformer.process_ohlcv_data。
+
+驗證 OHLCV 清洗、欄位正規化、缺失值處理、日報酬計算、交易可行性標記。
+"""
 import numpy as np
 import pandas as pd
 
@@ -5,7 +10,11 @@ from processing.transformer import Transformer
 
 
 def test_process_ohlcv_data_basic():
-    # 準備：兩天兩檔，含缺失值的 OHLCV long format
+    """
+    驗證 process_ohlcv_data 基本功能：欄位正規化、缺失值處理、型別轉換。
+
+    實務：測試含缺失值的輸入，驗證價格欄位 ffill、volume 填 0、無效資料移除。
+    """
     df_raw = pd.DataFrame(
         {
             "datetime": pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-01"]),
@@ -20,7 +29,6 @@ def test_process_ohlcv_data_basic():
 
     result = Transformer.process_ohlcv_data(df_raw)
 
-    # 欄位與型別驗證
     expected_cols = {
         "date",
         "stock_id",
@@ -37,5 +45,4 @@ def test_process_ohlcv_data_basic():
     assert set(result.columns) == expected_cols
     assert result["date"].dtype.kind == "M"
 
-    # 缺失值應已補齊，volume 缺失補為 0 或原值
     assert not result["close"].isna().any()

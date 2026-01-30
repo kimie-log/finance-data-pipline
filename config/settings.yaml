@@ -2,15 +2,15 @@
 # BigQuery 設定
 # ------------------------------------------------
 bigquery:
-    dataset: 'tw_top_{_top_n}_stock_data' # 在 BigQuery 中的 Dataset 名稱
-    location: 'asia-east1' # 資料集位置 (建議與 GCS Bucket 區域一致)
+    dataset: 'tw_top_{_top_n}_stock_data' # 在 BigQuery 中的 Dataset 名稱，使用 {top_n} 自動代換
+    location: 'asia-east1' # 資料集位置 (與 GCS Bucket 區域一致)
 
 # ------------------------------------------------
 # 選股策略設定
 # ------------------------------------------------
 top_stocks:
     top_n: 50 # 取市值前 N 大
-    excluded_industry: # 排除特定產業 (範例)
+    excluded_industry: # 排除特定產業 (目前設定產業財報計算方式不同之產業)
         - 建材營造
         - 金融業
         - 金融保險業
@@ -38,13 +38,13 @@ factors:
     factor_table_suffix: null  # 選填，因子表名後綴，同一組 (mv, start, end, top_n) 可並存多組 (例: value, momentum)
 
 # ------------------------------------------------
-# 基準指數（回測用）
+# 基準指數（回測使用）
 # ------------------------------------------------
 benchmark:
     index_ids: ["^TWII"]  # 加權指數；可加 "^TWOII" 櫃買
 
 # ------------------------------------------------
-# 回測層預設參數（手續費／稅，供 BigQuery 查詢）
+# 回測層預設參數（手續費／稅，供 BigQuery 查詢使用）
 # ------------------------------------------------
 backtest_config:
     fee_bps: 30   # 手續費 (bps)

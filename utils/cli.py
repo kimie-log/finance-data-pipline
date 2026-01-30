@@ -1,11 +1,30 @@
+"""
+CLI 參數解析與設定檔合併工具。
+
+統一處理 ETL pipeline 的命令列參數解析、設定檔讀取（config/settings.yaml）、
+參數合併（CLI 優先於設定檔）、dataset 模板代換（{top_n} / {_top_n}）。
+"""
+from __future__ import annotations
+
 import argparse
-from datetime import date
 from pathlib import Path
+from typing import Annotated
+
 import yaml
 
 
 def parse_args() -> argparse.Namespace:
-    # CLI 入口：統一解析執行參數，避免散落在多個檔案
+    """
+    解析 ETL pipeline 的命令列參數。
+
+    Returns:
+        argparse.Namespace 包含所有 CLI 參數；必填：--start、--end；--market-value-date 與
+        --market-value-dates 二擇一。
+
+    Note:
+        - --excluded-industry 可重複指定（action="append"）。
+        - --skip-gcs、--with-factors、--skip-benchmark、--skip-calendar 為 flag（action="store_true"）。
+    """
     parser = argparse.ArgumentParser(
         description="ETL pipeline for Taiwan stock data (FinLab + yfinance)."
     )
@@ -56,18 +75,45 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_config(root_dir: Path) -> dict:
-    # 統一讀取設定檔，避免將參數硬寫在程式碼中
+    """
+    從 config/settings.yaml 讀取設定檔並回傳 dict。
+
+    Args:
+        root_dir: 專案根目錄，用於定位 config/settings.yaml。
+
+    Returns:
+        設定檔內容的 dict；檔案不存在或格式錯誤時可能拋出 yaml 相關例外。
+
+    Note:
+        使用 yaml.safe_load 避免執行任意程式碼；建議設定檔結構對齊 README 說明。
+    """
     config_path = root_dir / "config/settings.yaml"
     return yaml.safe_load(open(config_path))
 
 
 def resolve_params(config: dict, args: argparse.Namespace) -> dict:
-    # CLI 參數優先，其次才使用設定檔預設
+    """
+    合併設定檔與 CLI 參數，CLI 優先；處理 dataset 模板代換與多個市值日解析。
+
+    Args:
+        config: 設定檔 dict（來自 load_config）。
+        args: CLI 參數（來自 parse_args）。
+
+    Returns:
+        合併後的參數 dict，包含 market_value_dates、market_value_date、start_date、end_date、
+        top_n、excluded_industry、pre_list_date、dataset_id、skip_gcs、with_factors、
+        factor_names、benchmark_index_ids、backtest_config、skip_benchmark、skip_calendar、
+        factor_table_suffix。
+
+    Note:
+        - market_value_dates 為列表（單一日期時為 [date]），market_value_date 為第一個元素。
+        - dataset_id 支援 {top_n} / {_top_n} 模板代換，用於動態命名。
+        - factor_table_suffix：CLI 優先於設定檔。
+    """
     top_stocks_cfg = config.get("top_stocks", {})
     yfinance_cfg = config.get("yfinance", {})
     bigquery_cfg = config.get("bigquery", {})
 
-    # 多個市值日（滾動回測）或單一市值日
     if getattr(args, "market_value_dates", None) and args.market_value_dates.strip():
         market_value_dates = [d.strip() for d in args.market_value_dates.split(",") if d.strip()]
     elif getattr(args, "market_value_date", None) and args.market_value_date:
@@ -75,7 +121,6 @@ def resolve_params(config: dict, args: argparse.Namespace) -> dict:
     else:
         market_value_dates = []
 
-    # 排除產業可用多次參數累加，未提供則使用設定檔
     excluded_industry = (
         args.excluded_industry
         if args.excluded_industry is not None
@@ -84,11 +129,9 @@ def resolve_params(config: dict, args: argparse.Namespace) -> dict:
     pre_list_date = args.pre_list_date or top_stocks_cfg.get("pre_list_date")
     top_n = args.top_n if args.top_n is not None else top_stocks_cfg.get("top_n", 50)
 
-    # start/end 必填（回測區間）
     start_date = args.start or yfinance_cfg.get("start")
     end_date = args.end or yfinance_cfg.get("end")
 
-    # dataset 支援 {top_n} / {_top_n} 動態代換
     dataset_id = args.dataset or bigquery_cfg.get("dataset")
     if isinstance(dataset_id, str):
         dataset_id = dataset_id.replace("{top_n}", str(top_n)).replace("{_top_n}", str(top_n))

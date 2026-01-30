@@ -1,3 +1,8 @@
+"""
+ingestion/yfinance_fetcher 的單元測試：YFinanceFetcher.fetch_daily_ohlcv_data、fetch_benchmark_daily。
+
+驗證 yfinance 抓取：欄位正規化（MultiIndex 處理、小寫命名）、台股 .TW 後綴、基準指數 index_id 處理。
+"""
 from unittest import mock
 
 import pandas as pd
@@ -6,7 +11,12 @@ from conftest import require_module
 
 
 def _get_fetcher():
-    # 確保 yfinance 已安裝，避免測試在缺依賴時直接壞掉
+    """
+    取得 YFinanceFetcher class，確保 yfinance 套件已安裝。
+
+    Returns:
+        YFinanceFetcher class。
+    """
     require_module("yfinance", "pip install -r requirements.txt")
     from ingestion.yfinance_fetcher import YFinanceFetcher
 
@@ -14,7 +24,12 @@ def _get_fetcher():
 
 
 def test_fetch_daily_ohlcv_data_long_format():
-    # 準備：模擬兩檔股票的 OHLCV 多重欄位資料
+    """
+    驗證 fetch_daily_ohlcv_data：MultiIndex 欄位處理、小寫命名、long format、台股 .TW 後綴。
+
+    實務：yfinance 單一 ticker 回傳 MultiIndex，需 droplevel；欄位統一為小寫以利 BigQuery；
+    long format 符合後續 Transformer.process_ohlcv_data 需求。
+    """
     YFinanceFetcher = _get_fetcher()
     with mock.patch("ingestion.yfinance_fetcher.yf.download") as mock_download:
         index = pd.date_range("2024-01-01", periods=2, freq="D", name="Date")
@@ -35,7 +50,6 @@ def test_fetch_daily_ohlcv_data_long_format():
             is_tw_stock=True,
         )
 
-        # 驗證：欄位名稱與必要欄位存在，且為 long format
         assert set(result.columns) == {
             "open",
             "high",
@@ -49,7 +63,11 @@ def test_fetch_daily_ohlcv_data_long_format():
 
 
 def test_fetch_benchmark_daily():
-    """基準指數日收盤與日報酬：欄位為 date, index_id, close, daily_return。"""
+    """
+    驗證 fetch_benchmark_daily：欄位為 date, index_id, close, daily_return；index_id 去掉前綴 ^。
+
+    實務：基準指數用於回測績效比較；index_id 去掉 ^ 以利 BigQuery 查詢；daily_return 供回測計算使用。
+    """
     YFinanceFetcher = _get_fetcher()
     index = pd.date_range("2024-01-01", periods=2, freq="D", name="Date")
     raw = pd.DataFrame(

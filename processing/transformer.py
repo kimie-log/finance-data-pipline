@@ -1,62 +1,81 @@
-import pandas as pd
-import numpy as np
+"""
+資料轉換模組：OHLCV 清洗與交易可行性標記
+
+將 yfinance 抓取的原始價量資料轉換為 BigQuery fact_price 表所需格式，
+包含欄位正規化、缺失值處理、日報酬計算與交易可行性標記（停牌、漲跌停）
+產出欄位與型別對齊後續 BigQuery 寫入與回測需求
+"""
+from __future__ import annotations
+
 import gc
 from typing import Annotated
+
+import numpy as np
+import pandas as pd
+
 from utils.logger import logger
 
 
 class Transformer:
+    """
+    OHLCV 資料轉換與清洗
+
+    所有方法為 staticmethod。產出欄位與型別對齊 BigQuery fact_price 寫入需求，
+    包含 daily_return 計算與交易可行性標記（is_suspended, is_limit_up, is_limit_down）
+    """
+
     @staticmethod
     def process_ohlcv_data(
         df_raw: Annotated[
             pd.DataFrame,
-            "yfinance 抓取的原始 OHLCV 價量資料 (long format)",
-        ]
-    ) -> Annotated[
-        pd.DataFrame,
-        "處理後的 OHLCV 市場資料 (long format, 含 daily_return)",
-    ]:
-        '''
-        函式說明：
-        將 OHLCV 價量資料整理為 fact table 需要的結構：
-        - 正規化欄位名稱與型別
-        - 依股票與日期排序
-        - 計算日報酬率 daily_return
-        '''
+            "yfinance 抓取的原始 OHLCV 價量資料 (long format)，欄位：datetime, asset, open, high, low, close, volume",
+        ],
+    ) -> pd.DataFrame:
+        """
+        將 OHLCV 價量資料整理為 fact_price 表所需結構
 
+        實務：欄位命名標準化（datetime→date, asset→stock_id）、型別轉換、缺失值處理（價格 ffill、volume 填 0）、
+        日報酬計算（pct_change）、交易可行性標記（啟發式：volume=0 且 OHLC 同價時判斷停牌／漲跌停）
+        產出欄位順序固定，以利 BigQuery 寫入與後續查詢
+
+        Args:
+            df_raw: yfinance 原始資料，long format，欄位含 datetime, asset, open, high, low, close, volume
+
+        Returns:
+            DataFrame 欄位：date, stock_id, open, high, low, close, volume, daily_return,
+            is_suspended, is_limit_up, is_limit_down。已依 stock_id, date 排序；無效資料（close 為 NaN）已移除
+
+        Note:
+            - daily_return 為 float32 以節省記憶體
+            - 交易可行性標記為啟發式，無外部資料源時使用；有外部來源時建議覆寫
+            - 處理後會執行 gc.collect() 釋放記憶體
+        """
         logger.info(f"Starting OHLCV transformation. Input shape: {df_raw.shape}")
 
         df = df_raw.copy()
 
-        # 欄位標準化：datetime -> date, asset -> stock_id
         df.rename(columns={"datetime": "date", "asset": "stock_id"}, inplace=True)
 
-        # 型別與排序處理
         df["date"] = pd.to_datetime(df["date"])
         df["stock_id"] = df["stock_id"].astype(str)
 
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        # 依股票與時間排序，方便 groupby 計算
         df.sort_values(by=["stock_id", "date"], inplace=True, ignore_index=True)
 
-        # 補齊缺失值：價格欄位以前值補齊，volume 缺失視為 0
         price_cols = ["open", "high", "low", "close"]
         df[price_cols] = df.groupby("stock_id", sort=False)[price_cols].ffill()
         df["volume"] = df["volume"].fillna(0)
 
-        # 移除仍為 NaN 的 close（代表該股票整段無有效資料）
         df.dropna(subset=["close"], inplace=True)
 
-        # 計算日報酬率：以收盤價為基準
         df["daily_return"] = (
             df.groupby("stock_id", sort=False)["close"]
             .pct_change()
             .astype(np.float32)
         )
 
-        # 交易可行性標記：無外部來源時以簡單啟發式標記（volume=0 且 OHLC 同價視為可能停牌／漲跌停）
         df["is_suspended"] = 0
         df["is_limit_up"] = 0
         df["is_limit_down"] = 0
@@ -67,7 +86,6 @@ class Transformer:
             df.loc[mask_same & (df["close"] < prev_close), "is_limit_down"] = 1
             df.loc[mask_same & (df["close"] == prev_close), "is_suspended"] = 1
 
-        # 最終欄位順序
         final_cols = [
             "date",
             "stock_id",
@@ -88,7 +106,6 @@ class Transformer:
             final_df.memory_usage().sum() / 1024**2,
         )
 
-        # 釋放中間物件
         del df
         gc.collect()
 

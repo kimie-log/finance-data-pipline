@@ -1,3 +1,22 @@
+"""
+ETL Pipeline 主腳本：台股價量與因子資料抓取、轉換、寫入 BigQuery。
+
+流程：
+    依 CLI / config/settings.yaml 取得參數 → 
+    對每個市值日執行 Ingestion（FinLab universe + yfinance OHLCV）→ 
+    Transformation（Transformer.process_ohlcv_data）→ 
+    Loading（BigQuery fact_price、dim_universe、dim_calendar、fact_benchmark_daily、dim_backtest_config、可選 fact_factor）→
+    本地 parquet 寫入 data/raw/interval、data/processed/interval，可選上傳 GCS
+
+依賴：
+    .env（FINLAB_API_TOKEN、GCP_PROJECT_ID、GCS_BUCKET）
+    config/settings.yaml
+    gcp_keys/ 下 Service Account JSON
+
+執行： 
+    python -m scripts.run_etl_pipeline
+    必填參數：--market-value-date 或 --market-value-dates、--start、--end
+"""
 import os
 import sys
 from pathlib import Path
@@ -5,17 +24,14 @@ from datetime import datetime
 import pandas as pd
 from dotenv import load_dotenv
 
-# 路徑設定：確保可以從任意工作目錄執行
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
 
-# 載入環境變數：集中管理 API Token / GCP 設定
 load_dotenv()
 
-# 匯入模組：集中在頂部方便依賴關係一眼看清
 from ingestion.yfinance_fetcher import YFinanceFetcher
 from ingestion.finlab_fetcher import FinLabFetcher
-from ingestion.finlab_factor_fetcher import fetch_factors_daily
+from ingestion.finlab_factor_fetcher import FinLabFactorFetcher
 from processing.transformer import Transformer
 from utils.google_cloud_storage import upload_file
 from utils.google_cloud_bigquery import load_to_bigquery
@@ -25,21 +41,27 @@ from utils.cli import parse_args, load_config, resolve_params
 
 
 def main() -> int:
-    # 解析 CLI 與設定檔參數
+    """
+    ETL Pipeline 主流程：解析參數 → 對每個市值日執行 Ingestion → Transformation → Loading
+
+    Returns:
+        0 成功；1 參數錯誤或任一步驟失敗（Ingestion / Transformation / Loading 任一拋錯即回傳 1）
+
+    Note:
+        - 僅支援 interval 模式（固定市值日 + 區間），供回測可重現
+        - 任一個市值日失敗即中斷，不回滾已寫入的 BigQuery / 本地檔案
+    """
     args = parse_args()
     config = load_config(ROOT_DIR)
     params = resolve_params(config, args)
 
-    # GCS & BigQuery 設定：從環境與設定檔取得
     bucket_name = os.getenv("GCS_BUCKET")
     bq_dataset = params["dataset_id"]
 
-    # 建立日期資料夾使用：以日期分區方便管理與回溯
     now = datetime.now()
     date_folder = now.strftime("%Y-%m-%d")
     timestamp = now.strftime("%Y%m%d_%H%M")
 
-    # 僅支援 interval 模式（固定市值日 + 區間），供回測可重現
     if not params.get("market_value_dates") or not params["start_date"] or not params["end_date"]:
         logger.error("請提供 --market-value-date 或 --market-value-dates，且 --start、--end 皆為必填。")
         return 1
@@ -49,23 +71,18 @@ def main() -> int:
     raw_dir.mkdir(parents=True, exist_ok=True)
     processed_dir.mkdir(parents=True, exist_ok=True)
 
-    # 若有指定區間，檔名與表名加入日期範圍
     start_date = params["start_date"]
     end_date = params["end_date"]
     date_range_tag = f"{start_date}_to_{end_date}" if (start_date and end_date) else None
 
-    # 初始化 GCP 環境：確保金鑰存在且避免被 Git 追蹤
     key_path = check_gcp_environment(ROOT_DIR)
     logger.info(f"=== STEP 0 :GCP 金鑰： {key_path} ===")
 
-    # 滾動回測：對每個市值日各跑一次完整 ETL
     for mv_date in params["market_value_dates"]:
         params["market_value_date"] = mv_date
         logger.info("=== 開始 ETL：market_value_date=%s ===", mv_date)
 
-        # ----------------------------------------------------------
-        # 1. Ingestion: 獲取資料 (Raw Data)
-        # ----------------------------------------------------------
+        # --- 1. Ingestion: 取得 universe 與 OHLCV raw，寫入本地 parquet，可選上傳 GCS ---
         logger.info("=== STEP 1 - A: Ingestion Started 取得股票列表 ===")
 
         FinLabFetcher.finlab_login()
@@ -85,6 +102,7 @@ def main() -> int:
         logger.info("=== STEP 1 - B: Ingestion Started 抓取股價(Raw, OHLCV) ===")
 
         try:
+            # 檔名含 mv{date}_top{n} 便於與 BigQuery 表名對應、重跑時辨識
             df_ohlcv_raw = YFinanceFetcher.fetch_daily_ohlcv_data(
                 stock_symbols=top_tickers,
                 start_date=start_date,
@@ -92,7 +110,6 @@ def main() -> int:
                 is_tw_stock=True,
             )
 
-            # 本地檔名含 mv 與 top_n，便於與 BigQuery 表名對應
             mv_tag = params["market_value_date"].replace("-", "")
             top_n = params["top_n"]
             if date_range_tag:
@@ -113,9 +130,7 @@ def main() -> int:
             logger.error(f"Ingestion Failed (market_value_date={mv_date}): {e}")
             return 1
 
-        # ----------------------------------------------------------
-        # 2. Transformation: 清洗與轉置
-        # ----------------------------------------------------------
+        # --- 2. Transformation: OHLCV 清洗、日報酬、交易可行性標記，寫入 processed parquet，可選上傳 GCS ---
         logger.info("=== STEP 2: Transformation Started (OHLCV) ===")
 
         try:
@@ -126,6 +141,7 @@ def main() -> int:
 
             df_cleaned_price['stock_id'] = df_cleaned_price['stock_id'].astype(str)
 
+            # 同一天同一股票重複列會導致 BigQuery upsert 結果不確定，先去重
             duplicates = df_cleaned_price.duplicated(subset=['date', 'stock_id']).sum()
             if duplicates > 0:
                 logger.warning(f"Detected {duplicates} duplicate rows. Dropping duplicates...")
@@ -154,9 +170,7 @@ def main() -> int:
             logger.error(f"Transformation Failed (market_value_date={mv_date}): {str(e)}")
             return 1
 
-        # ----------------------------------------------------------
-        # 3. Loading: 寫入 BigQuery (Data Warehouse)
-        # ----------------------------------------------------------
+        # --- 3. Loading: 寫入 BigQuery（fact_price upsert，其餘 truncate）---
         logger.info("=== STEP 3: Loading to BigQuery Started ===")
 
         try:
@@ -166,6 +180,7 @@ def main() -> int:
             target_dataset = f"{bq_dataset}_interval"
             target_table = f"fact_price_mv{mv_date_bq}_s{start_tag}_e{end_tag}_top{top_n}"
 
+            # 價量事實表：upsert 避免重複列，支援重跑
             load_to_bigquery(
                 df=df_cleaned_price,
                 dataset_id=target_dataset,
@@ -173,6 +188,7 @@ def main() -> int:
                 if_exists="upsert",
             )
 
+            # Universe 維度表：該市值日 Top N 清單，truncate 覆寫
             universe_table = f"dim_universe_mv{mv_date_bq}_top{top_n}"
             load_to_bigquery(
                 df=universe_df,
@@ -181,6 +197,7 @@ def main() -> int:
                 if_exists="truncate",
             )
 
+            # 交易日曆：由價量日期產生，供回測對齊；truncate 覆寫
             if not params["skip_calendar"]:
                 calendar_df = pd.DataFrame(
                     {"date": pd.to_datetime(df_cleaned_price["date"].unique()), "is_trading_day": 1}
@@ -192,6 +209,7 @@ def main() -> int:
                     if_exists="truncate",
                 )
 
+            # 基準指數：加權等日收盤與日報酬；truncate 覆寫
             if not params["skip_benchmark"] and params["benchmark_index_ids"]:
                 df_benchmark = YFinanceFetcher.fetch_benchmark_daily(
                     index_ids=params["benchmark_index_ids"],
@@ -206,6 +224,7 @@ def main() -> int:
                         if_exists="truncate",
                     )
 
+            # 回測層預設參數：手續費、證交稅等；truncate 覆寫
             if params.get("backtest_config"):
                 cfg = params["backtest_config"]
                 backtest_df = pd.DataFrame(
@@ -218,10 +237,11 @@ def main() -> int:
                     if_exists="truncate",
                 )
 
+            # 財報因子（可選）：需 --with-factors 且 factor_names 非空；truncate 覆寫，可加 factor_table_suffix 並存多組
             factor_names = params.get("factor_names") or []
             if params.get("with_factors") and factor_names:
                 trading_days = pd.DatetimeIndex(df_cleaned_price["date"].unique()).sort_values()
-                df_factor = fetch_factors_daily(
+                df_factor = FinLabFactorFetcher.fetch_factors_daily(
                     stock_ids=top_tickers,
                     factor_names=factor_names,
                     start_date=start_date,

@@ -1,3 +1,9 @@
+"""
+scripts/run_etl_pipeline 的整合測試：CLI 參數驗證、流程整合、檔名與 BigQuery 命名規則。
+
+驗證 ETL pipeline 主流程：參數驗證、FinLab universe 取得、yfinance OHLCV 抓取、
+Transformer 轉換、BigQuery 寫入、GCS 上傳路徑、檔名格式、BigQuery 表名規則。
+"""
 from unittest import mock
 
 import pandas as pd
@@ -6,7 +12,11 @@ import scripts.run_etl_pipeline as pipeline
 
 
 def test_requires_market_value_date():
-    # 缺少市值日期時應直接回傳錯誤
+    """
+    驗證缺少市值日期時直接回傳錯誤（exit code 1）並記錄錯誤日誌。
+
+    實務：參數驗證失敗應提早終止，避免後續步驟浪費資源；錯誤訊息應清楚提示必填參數。
+    """
     with mock.patch("scripts.run_etl_pipeline.parse_args") as mock_parse:
         with mock.patch("scripts.run_etl_pipeline.load_config") as mock_config:
             with mock.patch("scripts.run_etl_pipeline.resolve_params") as mock_resolve:
@@ -37,7 +47,12 @@ def test_requires_market_value_date():
 
 
 def test_interval_calls_finlab_with_market_value_date():
-    # interval 模式需帶入市值基準日期並呼叫 FinLab
+    """
+    驗證 interval 模式需帶入市值基準日期並呼叫 FinLab，完成完整 ETL 流程。
+
+    實務：驗證主流程整合（universe → OHLCV → transform → BigQuery）；fact_price 與 dim_universe
+    各寫入一次 BigQuery；mock 所有外部依賴以隔離測試。
+    """
     params = {
         "market_value_dates": ["2024-01-15"],
         "market_value_date": "2024-01-15",
@@ -95,12 +110,15 @@ def test_interval_calls_finlab_with_market_value_date():
                                             top_n=50,
                                             market_value_date="2024-01-15",
                                         )
-                                        # Fact + Universe 兩次 BigQuery 寫入
                                         assert mock_bq.call_count == 2
 
 
 def test_skip_gcs_does_not_upload():
-    # skip_gcs=True 時不應觸發任何上傳
+    """
+    驗證 skip_gcs=True 時不觸發任何 GCS 上傳，僅保留本地 parquet。
+
+    實務：用於本地開發或測試，避免上傳到 GCS 產生成本；驗證條件判斷正確。
+    """
     params = {
         "market_value_dates": ["2024-01-15"],
         "market_value_date": "2024-01-15",
@@ -157,7 +175,11 @@ def test_skip_gcs_does_not_upload():
 
 
 def test_gcs_upload_paths_interval():
-    # 應上傳到 data/raw/interval 與 data/processed/interval
+    """
+    驗證 interval 模式上傳到 GCS 的路徑：data/raw/interval/ 與 data/processed/interval/。
+
+    實務：路徑結構對齊資料湖分層（raw / processed）與模式（interval），便於管理與查詢。
+    """
     params = {
         "market_value_dates": ["2024-01-15"],
         "market_value_date": "2024-01-15",
@@ -217,7 +239,11 @@ def test_gcs_upload_paths_interval():
 
 
 def test_gcs_upload_paths_interval_mode():
-    # interval 模式應上傳到 data/raw/interval 與 data/processed/interval
+    """
+    驗證 interval 模式 GCS 上傳路徑（與 test_gcs_upload_paths_interval 重複，可考慮合併）。
+
+    實務：確保路徑結構一致，raw 與 processed 分別上傳到對應目錄。
+    """
     params = {
         "market_value_dates": ["2024-01-15"],
         "market_value_date": "2024-01-15",
@@ -277,7 +303,11 @@ def test_gcs_upload_paths_interval_mode():
 
 
 def test_bigquery_naming_interval_mode():
-    # interval 模式的 BigQuery 命名規則驗證
+    """
+    驗證 interval 模式的 BigQuery 命名規則：dataset_interval、fact_price_mv{date}_s{start}_e{end}_top{n}。
+
+    實務：表名含市值日、區間、top_n，便於識別與查詢；dataset 後綴 _interval 區分不同模式。
+    """
     params = {
         "market_value_dates": ["2024-01-15"],
         "market_value_date": "2024-01-15",
@@ -346,7 +376,11 @@ def test_bigquery_naming_interval_mode():
 
 
 def test_interval_filenames_include_date_range():
-    # interval 模式檔名應包含日期區間字串
+    """
+    驗證 interval 模式本地檔名包含日期區間字串，便於辨識與對應 BigQuery 表名。
+
+    實務：檔名含 {start}_to_{end}，與 BigQuery 表名 s{start}_e{end} 對應，重跑時易於識別。
+    """
     params = {
         "market_value_dates": ["2024-01-15"],
         "market_value_date": "2024-01-15",
