@@ -1,51 +1,99 @@
-# ------------------------------------------------
-# BigQuery 設定
-# ------------------------------------------------
-bigquery:
-    dataset: 'tw_top_{_top_n}_stock_data' # 在 BigQuery 中的 Dataset 名稱，使用 {top_n} 自動代換
-    location: 'asia-east1' # 資料集位置 (與 GCS Bucket 區域一致)
+# ETL Pipeline 設定
+etl:
+    # 市值基準日（單一，與 market_value_dates 二擇一）
+    market_value_date: null   # 例: '2024-01-15'
+    market_value_dates: []     # 例: ['2024-01-15', '2024-02-15']
 
-# ------------------------------------------------
-# 選股策略設定
-# ------------------------------------------------
-top_stocks:
-    top_n: 50 # 取市值前 N 大
-    excluded_industry: # 排除特定產業 (目前設定產業財報計算方式不同之產業)
-        - 建材營造
-        - 金融業
-        - 金融保險業
-        - 存託憑證
-    pre_list_date: '2021-01-01' # 只選在此日期前上市的公司 (過濾新股)
+    # 略過上傳 GCS
+    skip_gcs: false
 
-# ------------------------------------------------
-# 資料來源設定 - Yahoo Finance
-# ------------------------------------------------
-yfinance:
-    start: '2020-01-01' # 抓取歷史資料的起始日
-    end: null # 結束日 (null 代表抓到今天)
+    # 一併寫入財報因子
+    with_factors: true
 
-# ------------------------------------------------
-# 資料來源設定 - FinLab
-# ------------------------------------------------
-finlab:
-    enabled: true # 是否啟用 FinLab 模組
+    # 略過基準指數
+    skip_benchmark: false
 
-# ------------------------------------------------
-# 財報／基本面因子（落地 BigQuery 用）
-# ------------------------------------------------
-factors:
-    factor_names: []  # 例: ["營業利益", "營業收入"]，留空則不抓因子
-    factor_table_suffix: null  # 選填，因子表名後綴，同一組 (mv, start, end, top_n) 可並存多組 (例: value, momentum)
+    # 略過交易日曆
+    skip_calendar: false
 
-# ------------------------------------------------
-# 基準指數（回測使用）
-# ------------------------------------------------
-benchmark:
-    index_ids: ["^TWII"]  # 加權指數；可加 "^TWOII" 櫃買
+    # BigQuery 設定
+    bigquery:
+        # BigQuery Dataset ID（用於識別資料集）
+        dataset: 'tw_top_{_top_n}_stock_data'
+        # BigQuery 位置
+        location: 'asia-east1'
 
-# ------------------------------------------------
-# 回測層預設參數（手續費／稅，供 BigQuery 查詢使用）
-# ------------------------------------------------
-backtest_config:
-    fee_bps: 30   # 手續費 (bps)
-    tax_bps: 10   # 證交稅 (bps)
+    # 股票列表設定
+    top_stocks:
+        top_n: 50
+        excluded_industry:
+            - 建材營造
+            - 金融業
+            - 金融保險業
+            - 存託憑證
+        pre_list_date: '2021-01-01'
+
+    # yfinance 設定
+    yfinance:
+        # yfinance 起始日期
+        start: '2020-01-01'
+        # yfinance 結束日期
+        end: null
+
+    # finlab 設定
+    finlab:
+        enabled: true
+
+    # 財報因子設定
+    factors:
+        factor_names: []
+        factor_table_suffix: null
+
+    # 基準指數設定
+    benchmark:
+        index_ids: ["^TWII"]
+
+    # 回測設定
+    backtest_config:
+        fee_bps: 30
+        tax_bps: 10
+
+# 單因子分析設定
+single_factor_analysis:
+    dataset: null
+    factor: null
+    start: null
+    end: null
+    local_price: null
+    local_factor: null
+    quantiles: 5
+    periods: "1,5,10"
+    factor_table: "fact_factor"
+    auto_find_local: false
+    from_finlab_api: false
+
+# 多因子分析設定（加權排名 或 PCA）
+multi_factor_analysis:
+    dataset: null
+    start: null
+    end: null
+    local_price: null
+    quantiles: 5
+    periods: "1,5,10"
+    factor_table: "fact_factor"
+    auto_find_local: false
+    from_finlab_api: false
+    # 分析模式：weighted_rank（多因子加權排名）或 pca（主成分分析）
+    mode: "weighted_rank"
+    # 因子名稱列表（可從 config 或 CLI --factors 指定）
+    factors: []
+    # weighted_rank 專用：每個組合的因子數量（例如 5 表示五因子組合）
+    combo_size: 5
+    # weighted_rank 專用：等權重時使用；或傳入逗號分隔權重與 combo_size 一致
+    weights: null
+    # weighted_rank：因子與收益正相關為 true
+    positive_corr: true
+    # PCA 專用：要跑 Alphalens 的主成分編號（1-based），逗號分隔，例如 "2,4"
+    pcs: "2,4"
+    # PCA 專用：主成分數量，null 表示 因子數-1
+    n_components: null

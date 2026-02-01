@@ -18,7 +18,7 @@ if "finlab" not in sys.modules:
     _finlab_mock.data = mock.MagicMock()
     sys.modules["finlab"] = _finlab_mock
 
-from ingestion.finlab_factor_fetcher import FinLabFactorFetcher
+from factors.finlab_factor_fetcher import FinLabFactorFetcher
 
 
 def test_extend_factor_data_ffill():
@@ -80,7 +80,7 @@ def test_get_factor_data_without_trading_days_returns_raw():
     )
     raw.index.name = "index"
 
-    with mock.patch("ingestion.finlab_factor_fetcher.data") as mock_data:
+    with mock.patch("factors.finlab_factor_fetcher.data") as mock_data:
         mock_data.get.return_value.deadline.return_value = raw
         result = FinLabFactorFetcher.get_factor_data(
             stock_symbols=["2330", "2317"],
@@ -105,7 +105,7 @@ def test_get_factor_data_with_trading_days_returns_long_format():
     raw.index.name = "index"
     trading_days = pd.DatetimeIndex([pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-02")])
 
-    with mock.patch("ingestion.finlab_factor_fetcher.data") as mock_data:
+    with mock.patch("factors.finlab_factor_fetcher.data") as mock_data:
         mock_data.get.return_value.deadline.return_value = raw
         result = FinLabFactorFetcher.get_factor_data(
             stock_symbols=["2330", "2317"],
@@ -123,7 +123,7 @@ def test_list_factors_by_type():
 
     實務：用於查詢可用因子清單，避免輸入錯誤的因子名稱。
     """
-    with mock.patch("ingestion.finlab_factor_fetcher.data") as mock_data:
+    with mock.patch("factors.finlab_factor_fetcher.data") as mock_data:
         mock_data.search.return_value = [{"items": ["營業利益", "營業收入", "淨利"]}]
         result = FinLabFactorFetcher.list_factors_by_type("fundamental_features")
         mock_data.search.assert_called_once()
@@ -170,7 +170,7 @@ def test_fetch_factors_daily_columns():
         "value": [100.0, 50.0],
     })
 
-    with mock.patch("ingestion.finlab_factor_fetcher.FinLabFactorFetcher.get_factor_data", return_value=long_df):
+    with mock.patch("factors.finlab_factor_fetcher.FinLabFactorFetcher.get_factor_data", return_value=long_df):
         result = FinLabFactorFetcher.fetch_factors_daily(
             stock_ids=["2330", "2317"],
             factor_names=["營業利益"],

@@ -6,7 +6,7 @@ processing/factor_ranking 的單元測試：FactorRanking.rank_stocks_by_factor�
 import pandas as pd
 import pytest
 
-from processing.factor_ranking import FactorRanking
+from factors.factor_ranking import FactorRanking
 
 
 def test_rank_stocks_by_factor_positive_corr():

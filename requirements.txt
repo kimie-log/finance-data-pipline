@@ -19,3 +19,10 @@ google-cloud-bigquery
 
 # Parquet / BigQuery 相容
 pyarrow
+
+# 因子分析
+alphalens-reloaded
+matplotlib
+
+# 機器學習
+scikit-learn

@@ -9,6 +9,94 @@
 
 ---
 
+## 🚀 快速開始（5 分鐘上手）
+
+### 步驟 1：環境設定
+
+```bash
+# 1. 安裝依賴
+pip install -r requirements.txt
+
+# 2. 設定環境變數（建立 .env 檔案）
+cat > .env << EOF
+FINLAB_API_TOKEN=你的_finlab_token
+GCP_PROJECT_ID=你的_gcp_project_id
+GCS_BUCKET=你的_gcs_bucket_name
+EOF
+
+# 3. 設定 GCP 金鑰（將 Service Account JSON 放入 gcp_keys/）
+mkdir -p gcp_keys
+# 將你的 GCP 金鑰檔案放入 gcp_keys/
+```
+
+### 步驟 2：執行 ETL Pipeline（產生測試資料）
+
+```bash
+# 最有效率的測試參數：小範圍資料，不寫入 GCS
+python -m scripts.run_etl_pipeline \
+    --market-value-date 2017-05-16 \
+    --start 2017-05-16 \
+    --end 2021-05-15 \
+    --top-n 50 \
+    --skip-gcs
+```
+
+這會產生：
+- ✅ 本地價量檔案：`data/processed/{日期}/fact_price_*.parquet`
+- ✅ BigQuery 資料：`tw_top_50_stock_data_s20230101_e20231231_mv20240115.*`
+
+### 步驟 3：執行單因子分析（最快測試方式）
+
+```bash
+# 使用本地檔案 + FinLab API（最有效率，無需 BigQuery 因子資料）
+python -m scripts.run_single_factor_analysis \
+    --dataset tw_top_50_stock_data_s20230101_e20231231_mv20240115 \
+    --factor 營業利益 \
+    --start 2023-01-01 \
+    --end 2023-12-31 \
+    --auto-find-local \
+    --from-finlab-api
+```
+
+**說明**：
+- `--auto-find-local`：自動尋找本地價量檔案
+- `--from-finlab-api`：從 FinLab API 直接抓取因子資料（最快，無需 BigQuery）
+
+### 步驟 4：查看結果
+
+```bash
+# 查看報表
+ls -la data/single_factor_analysis_reports/
+
+# 開啟 PDF 報表（macOS）
+open data/single_factor_analysis_reports/營業利益_s2023-01-01_e2023-12-31_*/alphalens_*.pdf
+```
+
+### 📋 快速測試檢查清單
+
+- [ ] `.env` 檔案已設定（`FINLAB_API_TOKEN`、`GCP_PROJECT_ID`）
+- [ ] `gcp_keys/` 中有 GCP Service Account JSON
+- [ ] 已執行 ETL pipeline 產生價量資料
+- [ ] 已執行單因子分析並產生報表
+
+### 💡 測試其他因子
+
+```bash
+# 查看可用因子
+python -m factors.list_factors
+
+# 測試不同因子（替換 --factor 參數）
+python -m scripts.run_single_factor_analysis \
+    --dataset tw_top_50_stock_data_s20230101_e20231231_mv20240115 \
+    --factor ROE稅後 \
+    --start 2023-01-01 \
+    --end 2023-12-31 \
+    --auto-find-local \
+    --from-finlab-api
+```
+
+---
+
 ### 目前專案可以做到的事
 
 #### 一、主流程：可重現回測用的 ETL（僅 interval 模式）
@@ -112,9 +200,12 @@
 - `scripts/run_etl_pipeline.py`：主 ETL 腳本，負責串起整個流程（FinLab universe + yfinance OHLCV + BigQuery）
 - `ingestion/`  
   - `finlab_fetcher.py`：FinLab 登入與 Top N 市值 **universe**（含 `delist_date` 若 FinLab 有提供）
-  - `finlab_factor_fetcher.py`：`FinLabFactorFetcher` 財報／基本面因子抓取並展開至日頻（供 `--with-factors` 使用）
   - `yfinance_fetcher.py`：OHLCV 抓價 `fetch_daily_ohlcv_data`、基準指數 `fetch_benchmark_daily`
   - `base_fetcher.py`：抓取器基底類別
+- `factors/`
+  - `finlab_factor_fetcher.py`：`FinLabFactorFetcher` 財報／基本面因子抓取並展開至日頻（供 `--with-factors` 使用）
+  - `list_factors.py`：列出可用因子工具
+  - `factor_ranking.py`：因子排名與加權排名工具
 - `processing/transformer.py`：OHLCV 清洗、日報酬、交易可行性標記（`is_suspended` / `is_limit_up` / `is_limit_down`）
 - `utils/`  
   - `google_cloud_storage.py`：GCS 上傳與下載
@@ -204,25 +295,51 @@ backtest_config:               # 回測層預設（手續費／稅），寫入 d
 
 ### 執行 ETL Pipeline
 
+#### 前置準備
+
 確定以下條件都已完成：
 
-- 已建立 `.env` 並填入 `FINLAB_API_TOKEN`（FinLab 驗證碼）、`GCP_PROJECT_ID`, `GCS_BUCKET`
-- 已將 GCP Service Account 金鑰放入 `gcp_keys/`
-- 已建立 `config/settings.yaml`
-- 已安裝 requirements
+- ✅ 已建立 `.env` 並填入 `FINLAB_API_TOKEN`、`GCP_PROJECT_ID`、`GCS_BUCKET`
+- ✅ 已將 GCP Service Account 金鑰放入 `gcp_keys/`
+- ✅ 已安裝 requirements：`pip install -r requirements.txt`
 
-執行：
-
-```bash
-python scripts/run_etl_pipeline.py
-```
-
-可選參數（CLI 介面）：
+#### 最有效率的測試命令
 
 ```bash
-# 區間模式（固定市值基準日期，供回測可重現）
-python -m scripts.run_etl_pipeline --market-value-date 2024-01-15 --start 2020-01-01 --end 2024-01-01
+# 小範圍測試（2023 年，50 檔股票，不寫入 GCS）
+python -m scripts.run_etl_pipeline \
+    --market-value-date 2024-01-15 \
+    --start 2023-01-01 \
+    --end 2023-12-31 \
+    --top-n 50 \
+    --skip-gcs
 ```
+
+**說明**：
+- `--skip-gcs`：不上傳到 GCS，只保留本地檔案（測試時更快）
+- 小日期範圍（1 年）可加快執行速度
+- 會產生本地檔案：`data/processed/{日期}/fact_price_*.parquet`
+
+#### 完整執行（包含因子資料）
+
+```bash
+# 包含因子資料，寫入 BigQuery
+python -m scripts.run_etl_pipeline \
+    --market-value-date 2024-01-15 \
+    --start 2020-01-01 \
+    --end 2024-01-01 \
+    --top-n 50 \
+    --with-factors \
+    --skip-gcs
+```
+
+**注意**：需要先在 `config/settings.yaml` 設定 `factors.factor_names`，例如：
+```yaml
+factors:
+    factor_names: ["營業利益", "ROE稅後"]
+```
+
+#### 常用參數說明
 
 邏輯說明：
 - 使用「**指定市值日期**」挑 Top N，再抓指定區間價格，確保回測可重現、減少生存者偏誤。
@@ -264,9 +381,75 @@ python -m scripts.run_etl_pipeline --market-value-date 2024-01-15 --start 2020-0
 
 ---
 
+### 單因子分析（Alphalens）
+
+#### ⚡ 快速測試（推薦 - 最有效率）
+
+**使用本地價量檔案 + FinLab API 直接抓取因子**（無需 BigQuery 因子資料，最快）：
+
+```bash
+python -m scripts.run_single_factor_analysis \
+    --dataset tw_top_50_stock_data_s20230101_e20231231_mv20240115 \
+    --factor 營業利益 \
+    --start 2023-01-01 \
+    --end 2023-12-31 \
+    --auto-find-local \
+    --from-finlab-api
+```
+
+**為什麼最有效率？**
+- ✅ `--auto-find-local`：自動尋找本地價量檔案，無需手動指定路徑
+- ✅ `--from-finlab-api`：直接從 FinLab API 抓取因子，無需等待 BigQuery 查詢或本地因子檔案
+- ✅ 適合快速測試和迭代
+
+**參數說明**：
+- `--dataset`：BigQuery Dataset ID（用於識別資料集，實際價量資料從本地讀取）
+- `--factor`：因子名稱（使用 `python -m factors.list_factors` 查看可用因子）
+- `--start` / `--end`：分析日期範圍（需與 ETL 產生的資料範圍一致）
+- `--auto-find-local`：自動尋找本地價量檔案（在 `data/processed/` 中搜尋）
+- `--from-finlab-api`：從 FinLab API 直接抓取因子資料（無需 BigQuery 或本地因子檔案）
+- `--quantiles`：分位數數量（預設 5，可選：`--quantiles 10`）
+- `--periods`：前瞻期間（預設 1,5,10，可選：`--periods 1,5,10,20`）
+
+**報表輸出**：
+- 📁 位置：`data/single_factor_analysis_reports/{因子名稱}_s{開始日期}_e{結束日期}_{時間戳}/`
+- 📄 格式：PDF（完整報表）+ PNG（個別圖表）
+- 🔍 查看：`open data/single_factor_analysis_reports/營業利益_s2023-01-01_e2023-12-31_*/alphalens_*.pdf`
+
+#### 📊 從 BigQuery 讀取（如果已有因子資料）
+
+如果 ETL 時已使用 `--with-factors` 將因子資料寫入 BigQuery：
+
+```bash
+python -m scripts.run_single_factor_analysis \
+    --dataset tw_top_50_stock_data_s20230101_e20231231_mv20240115 \
+    --factor 營業利益 \
+    --start 2023-01-01 \
+    --end 2023-12-31 \
+    --auto-find-local
+```
+
+**注意**：此方式需要 BigQuery 中有 `fact_factor` 表，否則會報錯。建議使用 `--from-finlab-api` 更快速。
+
+#### 📝 手動指定檔案路徑
+
+如果需要明確指定檔案路徑：
+
+```bash
+python -m scripts.run_single_factor_analysis \
+    --dataset tw_top_50_stock_data_s20230101_e20231231_mv20240115 \
+    --factor 營業利益 \
+    --start 2023-01-01 \
+    --end 2023-12-31 \
+    --local-price data/processed/2026-01-30/fact_price_*.parquet \
+    --from-finlab-api
+```
+
+---
+
 ### 測試與更新資料
 
-#### 1. 如何執行測試？
+#### 1. 如何執行單元測試？
 
 執行測試（建議在專案虛擬環境中）：
 
@@ -295,11 +478,11 @@ python -m pytest -q
 | 模組 | 函式 | 測試檔 |
 |------|------|--------|
 | `ingestion/finlab_fetcher.py` | `finlab_login`, `fetch_top_stocks_universe` | `test_finlab_fetcher.py` |
-| `ingestion/finlab_factor_fetcher.py` | `FinLabFactorFetcher.extend_factor_data`, `get_factor_data`, `fetch_factors_daily`, `convert_quarter_to_dates`, `convert_date_to_quarter`, `list_factors_by_type`（皆為 staticmethod） | `test_finlab_factor_fetcher.py` |
+| `factors/finlab_factor_fetcher.py` | `FinLabFactorFetcher.extend_factor_data`, `get_factor_data`, `fetch_factors_daily`, `convert_quarter_to_dates`, `convert_date_to_quarter`, `list_factors_by_type`（皆為 staticmethod） | `test_finlab_factor_fetcher.py` |
 | `ingestion/yfinance_fetcher.py` | `fetch_daily_ohlcv_data`, `fetch_benchmark_daily` | `test_yfinance_fetcher.py` |
 | `ingestion/base_fetcher.py` | `save_local`（`fetch` 為抽象方法） | `test_base_fetcher.py` |
 | `processing/transformer.py` | `process_ohlcv_data` | `test_transformer.py` |
-| `processing/factor_ranking.py` | `FactorRanking.rank_stocks_by_factor`, `calculate_weighted_rank`（皆為 staticmethod） | `test_factor_ranking.py` |
+| `factors/factor_ranking.py` | `FactorRanking.rank_stocks_by_factor`, `calculate_weighted_rank`（皆為 staticmethod） | `test_factor_ranking.py` |
 | `utils/cli.py` | `parse_args`, `resolve_params`, `load_config` | `test_cli.py` |
 | `utils/google_cloud_bigquery.py` | `load_to_bigquery` | `test_google_cloud_bigquery.py` |
 | `utils/google_cloud_platform.py` | `check_gcp_environment` | `test_google_cloud_platform.py` |

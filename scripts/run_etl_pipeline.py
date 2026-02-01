@@ -17,6 +17,7 @@ ETL Pipeline 主腳本：台股價量與因子資料抓取、轉換、寫入 Big
     python -m scripts.run_etl_pipeline
     必填參數：--market-value-date 或 --market-value-dates、--start、--end
 """
+
 import os
 import sys
 from pathlib import Path
@@ -31,7 +32,7 @@ load_dotenv()
 
 from ingestion.yfinance_fetcher import YFinanceFetcher
 from ingestion.finlab_fetcher import FinLabFetcher
-from ingestion.finlab_factor_fetcher import FinLabFactorFetcher
+from factors.finlab_factor_fetcher import FinLabFactorFetcher
 from processing.transformer import Transformer
 from utils.google_cloud_storage import upload_file
 from utils.google_cloud_bigquery import load_to_bigquery
@@ -51,8 +52,8 @@ def main() -> int:
         - 僅支援 interval 模式（固定市值日 + 區間），供回測可重現
         - 任一個市值日失敗即中斷，不回滾已寫入的 BigQuery / 本地檔案
     """
-    args = parse_args()
     config = load_config(ROOT_DIR)
+    args = parse_args(config)
     params = resolve_params(config, args)
 
     bucket_name = os.getenv("GCS_BUCKET")
@@ -63,7 +64,9 @@ def main() -> int:
     timestamp = now.strftime("%Y%m%d_%H%M")
 
     if not params.get("market_value_dates") or not params["start_date"] or not params["end_date"]:
-        logger.error("請提供 --market-value-date 或 --market-value-dates，且 --start、--end 皆為必填。")
+        logger.error(
+            "請提供 market_value_date(s)、start、end（可從 CLI 或 config.etl / yfinance 設定）。"
+        )
         return 1
 
     raw_dir = ROOT_DIR / "data/raw" / date_folder

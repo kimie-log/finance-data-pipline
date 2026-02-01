@@ -4,6 +4,10 @@
 提供 console 與檔案（輪替）輸出，支援環境變數 LOG_LEVEL / LOG_DIR 動態調整。
 避免重複 handler、不冒泡到 root logger，適合 ETL pipeline 長期運行與除錯。
 """
+'''
+ TODO: 優化 log 輸出方式
+'''
+
 import logging
 import logging.handlers
 import os

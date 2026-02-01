@@ -207,5 +207,38 @@ class FinLabFactorFetcher:
         Returns:
             該型態下因子名稱列表；無結果時回傳空列表 
         """
-        result = data.search(keyword=data_type, display_info=["name", "description", "items"])
-        return list(result[0]["items"]) if result else []
+        try:
+            result = data.search(keyword=data_type)
+            
+            # 處理不同的返回格式
+            if not result:
+                return []
+            
+            # 如果 result 是列表
+            if isinstance(result, list):
+                if len(result) == 0:
+                    return []
+                # 取第一個元素
+                first_result = result[0]
+                if isinstance(first_result, dict):
+                    # 如果有 items 鍵，返回 items 列表
+                    if "items" in first_result:
+                        items = first_result["items"]
+                        return list(items) if isinstance(items, (list, tuple)) else [items] if items else []
+                    # 否則返回字典的所有鍵
+                    return list(first_result.keys())
+                # 如果第一個元素不是字典，返回整個列表轉為字串列表
+                return [str(item) for item in result]
+            
+            # 如果 result 是字典
+            elif isinstance(result, dict):
+                if "items" in result:
+                    items = result["items"]
+                    return list(items) if isinstance(items, (list, tuple)) else [items] if items else []
+                return list(result.keys())
+            
+            # 其他情況
+            return []
+        except Exception:
+            # 查詢失敗時返回空列表
+            return []

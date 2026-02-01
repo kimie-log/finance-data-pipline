@@ -36,7 +36,7 @@ Temporary Items
 *.icloud
 
 ### VisualStudioCode ###
-.vscode/*
+.vscode/
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
@@ -75,3 +75,6 @@ data/
 # Python cache
 **/__pycache__/
 *.pyc
+
+# 暫時參考資料
+.references/
