@@ -76,5 +76,6 @@ data/
 **/__pycache__/
 *.pyc
 
-# 暫時參考資料
+# 暫時參考資料（不上傳）
+references/
 .references/
